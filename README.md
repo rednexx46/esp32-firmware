@@ -64,7 +64,7 @@ A flexible mesh sensor network using ESP32 devices running MicroPython. Devices 
 
 ## 📚 Documentation
 
-- [`flash-mpy-tutorial.md`](flash-mpy-tutorial.md): How to flash MicroPython on ESP32.
+- [`flash-mpy-tutorial.md`](docs/flash-mpy-tutorial.md): How to flash MicroPython on ESP32.
 
 ---
 
