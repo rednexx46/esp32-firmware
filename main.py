@@ -1,19 +1,21 @@
 import time
 import machine
-import uos
+import ujson
 from config_reader import load_config
 from umqtt.simple import MQTTClient
 from espnow_comm import get_esp, get_sta, get_wifi_status
 from machine import Pin, ADC, I2C
 from bme680 import BME680_I2C
 
-# TODO: The sensor reading must be configured in the config.ini file
-# TODO: Implement KPIs
-
 # === Config ===
 print("[BOOT] Loading configuration...")
 config = load_config()
+kpi_interval = int(config.get("KPI", {}).get("kpi_interval", 60000))
+sensor_read_interval = int(config.get("SENSOR", {}).get("sensor_read_interval", 30000))
 use_bme = config.get("SENSOR", {}).get("use_bme680", "false").lower() == "true"
+bme_sda_pin = int(config.get("SENSOR", {}).get("bme680_sda_pin"))
+bme_scl_pin = int(config.get("SENSOR", {}).get("bme680_scl_pin"))
+ldr_pin = int(config.get("SENSOR", {}).get("ldr_pin", 34))
 use_ldr = config.get("SENSOR", {}).get("use_ldr", "false").lower() == "true"
 mqtt_host = config.get("MQTT", {}).get("mqtt_broker", "broker.local")
 mqtt_port = int(config.get("MQTT", {}).get("mqtt_port", 1883))
@@ -24,7 +26,10 @@ esp = get_esp()
 sta = get_sta()
 wifi_ok = get_wifi_status()
 print(f"[WIFI] Wi-Fi status: {wifi_ok}")
-ESP_NOW_KEY = config.get("ESP_NOW", {}).get("esp_key", "defaultfallback123")
+ESP_NOW_KEY = config.get("ESP_NOW", {}).get("esp_key")
+if not ESP_NOW_KEY:
+    ESP_NOW_KEY = b'\x00' * 16  # Default key if not set
+    print("[ESP_NOW] Using default ESP-NOW key.")
 
 BUFFER = []
 BUFFER_FILE = "buffer.txt"
@@ -32,13 +37,23 @@ MAX_FAILURES = 3
 
 # === Sensor Setup ===
 print("[SENSOR] Setting up sensors...")
-ldr = ADC(Pin(34)) if use_ldr else None
-if ldr:
-    ldr.atten(ADC.ATTN_11DB)
-    print("[SENSOR] LDR sensor initialized.")
-bme = BME680_I2C(i2c=I2C(scl=Pin(22), sda=Pin(21))) if use_bme else None
-if bme:
-    print("[SENSOR] BME680 sensor initialized.")
+ldr = None
+if use_ldr:
+    try:
+        ldr = ADC(Pin(ldr_pin))
+        ldr.atten(ADC.ATTN_11DB)
+        print(f"[SENSOR] LDR sensor initialized on pin {ldr_pin}.")
+    except Exception as e:
+        print(f"[SENSOR] Failed to initialize LDR on pin {ldr_pin}: {e}")
+
+bme = None
+if use_bme:
+    try:
+        i2c = I2C(scl=Pin(bme_scl_pin), sda=Pin(bme_sda_pin))
+        bme = BME680_I2C(i2c=i2c)
+        print(f"[SENSOR] BME680 sensor initialized on SDA={bme_sda_pin}, SCL={bme_scl_pin}.")
+    except Exception as e:
+        print(f"[SENSOR] Failed to initialize BME680 on SDA={bme_sda_pin}, SCL={bme_scl_pin}: {e}")
 
 # === Helpers ===
 def read_sensors():
@@ -102,7 +117,12 @@ def gateway_loop():
     client = MQTTClient("gateway", mqtt_host, port=mqtt_port, user=mqtt_user, password=mqtt_pass)
     client.connect()
 
+    device_id = sta.config('mac').hex()
+    print(f"[GATEWAY] Device ID: {device_id}")
+    partial_msgs = {}  # node_id: { "total": int, "parts": {idx: bytes}, "start": ticks_ms }
+    TIMEOUT_MS = 30000  # 30 seconds
     last_sensor_time = time.ticks_ms()
+    last_kpi_time = time.ticks_ms()
 
     while True:
         if not sta.isconnected():
@@ -111,21 +131,81 @@ def gateway_loop():
             machine.reset()
 
         host, msg = esp.recv()
+
+        # Send KPI
+        if time.ticks_diff(time.ticks_ms(), last_kpi_time) > 60000:
+            kpi_msg = f"KPI|device_id={device_id};uptime={time.ticks_ms() // 1000}"
+            print(f"[GATEWAY] Sending KPI: {kpi_msg}")
+            try:
+                client.publish(f"mesh/kpi/esp-gateway", kpi_msg)
+            except Exception as e:
+                print(f"[GATEWAY] Failed to send KPI: {e}")
+            last_kpi_time = time.ticks_ms()
+
         if msg:
+            node_id = host.hex()
+            now = time.ticks_ms()
+
             if msg == b"DISCOVER_GATEWAY":
                 mac = sta.config('mac')
                 print(f"[GATEWAY] Responding to DISCOVER_GATEWAY from {host}")
                 esp.send(host, b"I_AM_GATEWAY:" + mac)
+
+            elif msg.startswith(b"PART[") and b"]|" in msg:
+                try:
+                    header_end = msg.index(b"]|") + 2
+                    header = msg[:header_end].decode()
+                    body = msg[header_end:]
+
+                    part_info = header[5:-2]
+                    idx, total = map(int, part_info.split("/"))
+
+                    if node_id not in partial_msgs:
+                        partial_msgs[node_id] = {
+                            "total": total,
+                            "parts": {},
+                            "start": now
+                        }
+
+                    partial_msgs[node_id]["parts"][idx] = body
+                    print(f"[GATEWAY] Received part {idx}/{total} from {node_id}")
+
+                    if len(partial_msgs[node_id]["parts"]) == total:
+                        parts = partial_msgs[node_id]["parts"]
+                        full_msg = b''.join([parts[i] for i in range(1, total + 1)])
+                        topic = f"mesh/data/{node_id}"
+                        print(f"[GATEWAY] Reconstructed full message from {node_id}: {full_msg}")
+                        client.publish(topic, full_msg)
+                        del partial_msgs[node_id]
+
+                except Exception as e:
+                    print(f"[GATEWAY] Failed to process multipart message: {e}")
+            elif msg.startswith(b"KPI|"):
+                    topic = f"mesh/kpi/{node_id}"
+                    kpi_data = msg[4:]  # Strip prefix "KPI|"
+                    print(f"[GATEWAY] KPI from {node_id}: {kpi_data}")
+                    client.publish(topic, kpi_data)
+                    continue
             else:
-                node_id = host.hex()
                 topic = f"mesh/data/{node_id}"
                 print(f"[GATEWAY] MQTT publish from node {node_id}: {msg}")
                 client.publish(topic, msg)
 
-        if time.ticks_diff(time.ticks_ms(), last_sensor_time) > 10000:
+        # Timeout cleanup for incomplete messages
+        now = time.ticks_ms()
+        expired = []
+        for nid in partial_msgs:
+            if time.ticks_diff(now, partial_msgs[nid]["start"]) > TIMEOUT_MS:
+                expired.append(nid)
+        for nid in expired:
+            print(f"[GATEWAY] Dropping incomplete message from {nid} due to timeout.")
+            del partial_msgs[nid]
+
+        # Own sensor reading
+        if time.ticks_diff(time.ticks_ms(), last_sensor_time) > sensor_read_interval:
             payload = read_sensors()
             if payload:
-                topic = "mesh/data/gateway"
+                topic = "mesh/data/{device_id}"
                 print(f"[GATEWAY] MQTT publish (own sensor): {payload}")
                 client.publish(topic, payload)
             last_sensor_time = time.ticks_ms()
@@ -138,6 +218,12 @@ def node_loop():
 
     BUFFER[:] = load_buffer()
     consecutive_failures = 0
+
+    # KPI variables
+    kpi_readings = 0
+    kpi_sent = 0
+    kpi_failures = 0
+    last_kpi_time = time.ticks_ms()
 
     def discover_gateway():
         nonlocal gateway_mac
@@ -164,9 +250,10 @@ def node_loop():
     last_read = time.ticks_ms()
 
     while True:
-        if time.ticks_diff(time.ticks_ms(), last_read) >= 10000:
+        if time.ticks_diff(time.ticks_ms(), last_read) >= sensor_read_interval:
             payload = read_sensors()
             if payload:
+                kpi_readings += 1
                 if len(BUFFER) < 20:
                     BUFFER.append(payload)
                     save_buffer(BUFFER)
@@ -189,9 +276,11 @@ def node_loop():
                 print(f"[NODE] Sent buffered: {BUFFER[i]}")
                 i += 1
                 consecutive_failures = 0
+                kpi_sent += 1
             except Exception as e:
                 print(f"[NODE] Send failed: {e}")
                 consecutive_failures += 1
+                kpi_failures += 1
                 if consecutive_failures >= MAX_FAILURES:
                     print("[NODE] Lost connection to gateway. Resetting discovery.")
                     gateway_mac = None
@@ -199,6 +288,18 @@ def node_loop():
 
         BUFFER[:] = BUFFER[i:]
         save_buffer(BUFFER)
+
+        # === Send KPIs ===
+        if time.ticks_diff(time.ticks_ms(), last_kpi_time) >= kpi_interval:
+            uptime = time.ticks_ms() // 1000
+            kpi_msg = f"KPI|readings={kpi_readings};sent={kpi_sent};failures={kpi_failures};uptime={uptime}"
+            print(f"[NODE] Sending KPI: {kpi_msg}")
+            try:
+                esp.send(gateway_mac, kpi_msg.encode())
+            except Exception as e:
+                print(f"[NODE] Failed to send KPI: {e}")
+            last_kpi_time = time.ticks_ms()
+
         time.sleep(1)
 
 # === MAIN ===

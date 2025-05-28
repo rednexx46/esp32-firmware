@@ -1,73 +1,131 @@
+Here is your updated `README.md` reflecting all current features and improvements from the latest version of the code:
+
+---
+
 # ESP32 Mesh Sensor Network
 
-A flexible mesh sensor network using ESP32 devices running MicroPython. Devices can act as either a **gateway** (publishing sensor data to MQTT) or a **node** (sending sensor data to the gateway using ESP-NOW). All configuration is managed via a simple `config.ini` file.
+A robust and flexible ESP32-based mesh sensor network using **ESP-NOW** and **MQTT**, built with **MicroPython**. Devices dynamically assume roles as **nodes** or a **gateway**, support multiple sensors, KPI reporting, and buffered delivery.
 
 ---
 
 ## 🚀 Features
 
-- **Mesh Networking:** Uses ESP-NOW for low-power, peer-to-peer communication between nodes and the gateway.
-- **Wi-Fi & MQTT:** Gateway connects to Wi-Fi and publishes sensor data to an MQTT broker.
-- **Sensor Support:** Supports BME680 (temperature, humidity, pressure, gas) and LDR (light) sensors.
-- **Buffering:** Nodes buffer sensor data if the gateway is unavailable and resend when reconnected.
-- **Auto Role Selection:** Devices automatically determine if they should act as a gateway or node.
-- **Configurable:** All settings (Wi-Fi, MQTT, ESP-NOW key, sensors) are managed in `config.ini`.
+* 🧠 **Auto Role Detection**: Devices auto-detect if they are gateway or node
+* 📡 **ESP-NOW Mesh**: Nodes send data to gateway via low-power ESP-NOW
+* 🌐 **Wi-Fi + MQTT**: Gateway connects to broker and publishes data
+* 🌡️ **Sensor Support**: BME680 (temp, humidity, pressure) and LDR (light)
+* 📊 **KPI Reporting**:
+
+  * Nodes send KPIs (readings, sent, failures, uptime)
+  * Gateway sends uptime KPIs
+  * KPIs are sent via MQTT under `mesh/kpi/<device_id>`
+* 💾 **Buffered Delivery**: Sensor data is stored and resent if gateway is offline
+* 🔒 **Shared ESP-NOW Key** for security
+* 🔧 **Full Config via `config.ini`**
 
 ---
 
-## 📁 File Structure
+## 🧱 Architecture
 
-| File                   | Description                                                        |
-|------------------------|--------------------------------------------------------------------|
-| `main.py`              | Main application logic. Handles role selection, sensor reading, and communication. |
-| `boot.py`              | Initializes Wi-Fi, ESP-NOW, and loads configuration at boot.        |
-| `config_reader.py`     | Loads and parses the `config.ini` file.                             |
-| `bme680.py`            | Driver for the BME680 sensor (I2C).                                 |
-| `config.ini`           | Project configuration file (Wi-Fi, MQTT, ESP-NOW, sensors).         |
-| `flash-mpy-tutorial.md`| Step-by-step guide to flashing MicroPython firmware on ESP32.       |
+```text
+[NODEs] --(ESP-NOW)--> [GATEWAY] --(MQTT)--> [BROKER]
+                                      │
+                      ┌───────────────┴───────────────┐
+                      ▼                               ▼
+             mesh/data/<device_id>         mesh/kpi/<device_id>
+```
+
+---
+
+## 🗂️ File Structure
+
+| File                    | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `main.py`               | Device logic (role, sensors, comms, KPI) |
+| `boot.py`               | Wi-Fi and config initialization          |
+| `config_reader.py`      | Parses `config.ini` into Python dict     |
+| `bme680.py`             | Driver for BME680 sensor via I2C         |
+| `config.ini`            | Configuration file                       |
+| `flash-mpy-tutorial.md` | How to flash MicroPython onto your ESP32 |
+
+---
+
+## ⚙️ Configuration (`config.ini`)
+
+```ini
+[KPI]
+kpi_interval = 60
+
+[ESP_NOW]
+esp_key = msh1234567890esp
+
+[WIFI]
+wifi_ssid = ESPMeshAP
+wifi_password = OwsLmJh9ENdDTaW
+
+[MQTT]
+mqtt_broker = broker.local
+mqtt_port = 1883
+mqtt_user = esp-gateway
+mqtt_password = F6mwB6AEe08Bvt6
+
+[SENSOR]
+use_bme680 = false
+bme_sda_pin = 21
+bme_scl_pin = 22
+use_ldr = true
+ldr_pin = 34
+sensor_read_interval = 30
+```
+
+---
+
+## 📦 MQTT Topics
+
+| Topic                   | Description                    |
+| ----------------------- | ------------------------------ |
+| `mesh/data/<device_id>` | Sensor data from nodes/gateway |
+| `mesh/kpi/<device_id>`  | KPIs from each device          |
+
+---
+
+## 📈 Example KPI Messages
+
+From a node:
+
+```
+KPI|readings=5;sent=5;failures=0;uptime=120
+```
+
+From gateway:
+
+```
+KPI|device_id=c0ffeeabcd1234;uptime=300
+```
 
 ---
 
 ## ⚡ Quick Start
 
-1. **Flash MicroPython**  
-    See [`flash-mpy-tutorial.md`](flash-mpy-tutorial.md) for detailed instructions.
+1. **Flash MicroPython**
+   Follow `flash-mpy-tutorial.md` to flash the firmware.
 
-2. **Configure**  
-    Edit `config.ini` to set your Wi-Fi, MQTT, ESP-NOW key, and sensor options.
+2. **Configure**
+   Edit `config.ini` with your Wi-Fi, MQTT and sensor settings.
 
-3. **Deploy Code**  
-    Copy all `.py` files and `config.ini` to your ESP32 using Thonny, ampy, or similar tools.
+3. **Upload Code**
+   Use Thonny, ampy, rshell or WebREPL to transfer all `.py` files and `config.ini`.
 
-4. **Power Up**  
-    The device will boot, load configuration, and determine its role:
-    - **Gateway:** Connects to Wi-Fi and MQTT, listens for nodes, and publishes sensor data.
-    - **Node:** Discovers the gateway via ESP-NOW and sends sensor data.
+4. **Power Up**
+   Device will boot and auto-select its role:
 
----
-
-## 🛠️ Customization
-
-- **Add/Remove Sensors:** Change `[SENSOR]` section in `config.ini`.
-- **Change MQTT Broker:** Update `[MQTT]` section.
-- **Change ESP-NOW Key:** Update `[ESP_NOW]` section (must match on all devices).
+   * **Gateway**: Publishes data and KPIs to MQTT
+   * **Node**: Sends sensor data and KPIs to gateway
 
 ---
 
-## 📦 Requirements
+## 🔐 Security Tips
 
-- ESP32 board
-- MicroPython firmware ([download here](https://micropython.org/download/esp32/))
-- Python tools: Thonny, esptool (for flashing)
-
----
-
-## 📚 Documentation
-
-- [`flash-mpy-tutorial.md`](docs/flash-mpy-tutorial.md): How to flash MicroPython on ESP32.
-
----
-
-## 📄 License
-
-See original sources for sensor drivers. Project code is provided as-is for educational purposes.
+* Always define a strong `esp_key` in `[ESP_NOW]`
+* Use authentication in your MQTT broker (`[MQTT]`)
+* Avoid storing sensitive credentials in plain-text for production
