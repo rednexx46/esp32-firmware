@@ -1,7 +1,3 @@
-Here is your updated `README.md` reflecting all current features and improvements from the latest version of the code:
-
----
-
 # ESP32 Mesh Sensor Network
 
 A robust and flexible ESP32-based mesh sensor network using **ESP-NOW** and **MQTT**, built with **MicroPython**. Devices dynamically assume roles as **nodes** or a **gateway**, support multiple sensors, KPI reporting, and buffered delivery.
