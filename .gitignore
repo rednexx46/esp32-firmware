@@ -1,0 +1,22 @@
+# Bytecode / Cache
+__pycache__/
+*.pyc
+
+# Deployment Scripts Logs
+*.log
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Thonny
+.thonny/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Firmware Images / Builds
+ESP32_GENERIC-*.bin

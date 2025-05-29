@@ -11,13 +11,14 @@ A robust and flexible ESP32-based mesh sensor network using **ESP-NOW** and **MQ
 * 🌐 **Wi-Fi + MQTT**: Gateway connects to broker and publishes data
 * 🌡️ **Sensor Support**: BME680 (temp, humidity, pressure) and LDR (light)
 * 📊 **KPI Reporting**:
-
   * Nodes send KPIs (readings, sent, failures, uptime)
   * Gateway sends uptime KPIs
   * KPIs are sent via MQTT under `mesh/kpi/<device_id>`
 * 💾 **Buffered Delivery**: Sensor data is stored and resent if gateway is offline
 * 🔒 **Shared ESP-NOW Key** for security
+* 🛠️ **Modular Codebase**: Cleanly organized by functionality
 * 🔧 **Full Config via `config.ini`**
+* ⚙️ **Cross-platform Deployment Scripts**: `deploy.sh` (Unix) and `deploy.bat` (Windows)
 
 ---
 
@@ -29,20 +30,43 @@ A robust and flexible ESP32-based mesh sensor network using **ESP-NOW** and **MQ
                       ┌───────────────┴───────────────┐
                       ▼                               ▼
              mesh/data/<device_id>         mesh/kpi/<device_id>
-```
+````
 
 ---
 
-## 🗂️ File Structure
+## 🗂️ Project Structure
 
-| File                    | Description                              |
-| ----------------------- | ---------------------------------------- |
-| `main.py`               | Device logic (role, sensors, comms, KPI) |
-| `boot.py`               | Wi-Fi and config initialization          |
-| `config_reader.py`      | Parses `config.ini` into Python dict     |
-| `bme680.py`             | Driver for BME680 sensor via I2C         |
-| `config.ini`            | Configuration file                       |
-| `flash-mpy-tutorial.md` | How to flash MicroPython onto your ESP32 |
+```
+ESP32-FIRMWARE/
+├── boot.py                  # Initializes Wi-Fi and ESP-NOW
+├── main.py                  # Determines role and starts logic
+├── config.ini               # Configuration file
+├── requirements.txt         # Host Python dependencies (e.g. ampy)
+├── .gitignore               # Ignore local/temp files
+├── deploy.sh                # Deployment script for Linux/macOS
+├── deploy.bat               # Deployment script for Windows
+├── README.md                # Project documentation
+
+├── core/                    # Core logic
+│   ├── gateway.py           # Gateway loop
+│   ├── node.py              # Node loop
+│   └── sensor.py            # Sensor reading and setup
+
+├── network/                 # Communication layer
+│   ├── espnow_comm.py       # Shared ESP-NOW and Wi-Fi state
+│   └── wifi_utils.py        # Wi-Fi connection management
+
+├── utils/                   # Support utilities
+│   ├── buffer_utils.py      # Persistent message buffering
+│   ├── config_reader.py     # Config parsing
+│   └── mqtt_utils.py        # MQTT connection checker
+
+├── lib/                     # Hardware libraries
+│   └── bme680.py            # BME680 sensor driver
+
+└── docs/
+    └── flash-mpy-tutorial.md  # Flashing MicroPython guide
+```
 
 ---
 
@@ -104,24 +128,38 @@ KPI|device_id=c0ffeeabcd1234;uptime=300
 ## ⚡ Quick Start
 
 1. **Flash MicroPython**
-   Follow `flash-mpy-tutorial.md` to flash the firmware.
+   Follow `docs/flash-mpy-tutorial.md` to flash firmware to your ESP32.
 
-2. **Configure**
-   Edit `config.ini` with your Wi-Fi, MQTT and sensor settings.
+2. **Edit Configuration**
+   Adjust `config.ini` with your network, MQTT, and sensor settings.
 
-3. **Upload Code**
-   Use Thonny, ampy, rshell or WebREPL to transfer all `.py` files and `config.ini`.
+3. **Install Tools**
+   Install dependencies on your PC:
 
-4. **Power Up**
-   Device will boot and auto-select its role:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-   * **Gateway**: Publishes data and KPIs to MQTT
-   * **Node**: Sends sensor data and KPIs to gateway
+4. **Deploy the Code**
+
+   * On **Linux/macOS**:
+
+     ```bash
+     ./deploy.sh
+     ```
+   * On **Windows**: Run `deploy.bat`
+
+5. **Power the Device**
+   On boot, the device:
+
+   * Connects to Wi-Fi
+   * Initializes ESP-NOW
+   * Automatically becomes a **Gateway** or **Node**
 
 ---
 
 ## 🔐 Security Tips
 
-* Always define a strong `esp_key` in `[ESP_NOW]`
-* Use authentication in your MQTT broker (`[MQTT]`)
-* Avoid storing sensitive credentials in plain-text for production
+* Always set a secure, 16-byte `esp_key` in `[ESP_NOW]`
+* Use MQTT authentication (`[MQTT]`) with strong passwords
+* Avoid storing sensitive credentials in plain text on production devices
