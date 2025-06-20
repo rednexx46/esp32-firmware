@@ -17,23 +17,41 @@ def setup_sensors(config):
         try:
             i2c = I2C(scl=Pin(config["bme_scl_pin"]), sda=Pin(config["bme_sda_pin"]))
             bme = BME680_I2C(i2c=i2c)
-            print("[SENSOR] BME680 initialized.")
+            print("[SENSOR] BME680 initialized on pin SCL={} SDA={}".format(config["bme_scl_pin"], config["bme_sda_pin"]))
         except Exception as e:
             print(f"[SENSOR] Failed to init BME680: {e}")
 
     return ldr, bme
 
 def read_sensors(ldr, bme):
+    ldr_value = None
+    bme_data = None
+
     if ldr:
-        value = ldr.read()
-        print(f"[SENSOR] LDR: {value}")
-        return f"LDR={value}".encode()
+        try:
+            ldr_value = ldr.read()
+            print(f"[SENSOR] LDR: {ldr_value}")
+        except Exception as e:
+            print(f"[SENSOR] Failed to read LDR: {e}")
 
-    if bme and bme.get_sensor_data():
-        t = round(bme.data.temperature, 2)
-        h = round(bme.data.humidity, 2)
-        p = round(bme.data.pressure, 2)
-        print(f"[SENSOR] BME: T={t}C H={h}% P={p}hPa")
+    if bme:
+        try:
+            # Adafruit MicroPython BME680 reads directly
+            t = round(bme.temperature, 2)
+            h = round(bme.humidity, 2)
+            p = round(bme.pressure, 2)
+            bme_data = (t, h, p)
+            print(f"[SENSOR] BME: T={t}C H={h}% P={p}hPa")
+        except Exception as e:
+            print(f"[SENSOR] Failed to read BME680: {e}")
+
+    if ldr_value is not None and bme_data is not None:
+        t, h, p = bme_data
+        return f"LDR={ldr_value} T={t}C H={h}% P={p}hPa".encode()
+    elif ldr_value is not None:
+        return f"LDR={ldr_value}".encode()
+    elif bme_data is not None:
+        t, h, p = bme_data
         return f"T={t}C H={h}% P={p}hPa".encode()
-
-    return b"no_data"
+    else:
+        return b"no_data"

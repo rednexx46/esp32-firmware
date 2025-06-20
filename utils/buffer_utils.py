@@ -16,6 +16,5 @@ def save_buffer(buf):
         with open(BUFFER_FILE, "w") as f:
             for item in buf:
                 f.write(item.decode() + "\n")
-        print(f"[BUFFER] Saved {len(buf)} items.")
     except Exception as e:
         print(f"[BUFFER] Save error: {e}")
